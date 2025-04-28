@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>开源项目 - 中华物理之路</title>
+    <style>
+        .code-container {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>中华物理之路 开源代码</h1>
+    
+    <!-- 代码展示 -->
+    <div class="code-container">
+        <pre><code>
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+public class UIManager : MonoBehaviour
+{
+    // 单例模式，确保只有一个UIManager实例
+    public static UIManager instance;
+
+    // 游戏失败时显示的图片
+    public GameObject failedImage;
+
+    // 用于显示玩家收集到的颜色的RawImage数组
+    public RawImage[] playerCollectedColor;
+
+    // ColorBag的GridLayoutGroup组件，用于管理收集到的颜色的布局
+    public GridLayoutGroup colorBag;
+
+    // ColorTarget的GridLayoutGroup组件，用于管理目标颜色的布局
+    public GridLayoutGroup colorTarget;
+
+    // ColorReward的GridLayoutGroup组件，用于管理奖励颜色的布局
+    public GridLayoutGroup colorReward;
+
+    // 玩家拥有的颜色列表
+    public List<Color> ownColor;
+    public List<Texture> ownTexture;
+    // 目标颜色列表
+    public List<Color> targetColor;
+    public List<Texture> targetTexture;
+    // 奖励颜色列表
+    public List<Color> rewardColor;
+    public List<Texture> rewardTexture;
+    #region UI移动相关
+    // 文字UI元素，用于显示关卡信息、时间等
+    public Text textElement;
+    // 用于显示时间增加的文本元素
+    public Text timeTextElement;
+    // 移动持续时间
+    public float moveDuration = 1f;
+    // 淡出持续时间
+    public float fadeDuration = 0.5f;
+    // 屏幕外的位置
+    public Vector3 offScreenPosition = new Vector3(0, 1080, 0);
+    // 屏幕上的目标位置
+    public Vector3 onScreenPosition = new Vector3(0, 0, 0);
+
+    // CanvasGroup组件，用于控制UI元素的透明度以实现淡入淡出效果
+    private CanvasGroup canvasGroup;
+    #endregion
+
+    // 玩家图标
+    public GameObject playerIcon;
+
+    // 奖励颜色刷新倒计时
+    public float refreshRewardColorCount = 0;
+
+    // 奖励颜色刷新时间间隔
+    public float refreshRewardColorTime = 20f;
+
+    // 游戏时间限制
+    public float TimeLimit = 120f;
+
+    // 游戏失败标志
+    public bool isFailed = false;
+
+    /// <summary>
+    /// 在Awake方法中初始化UIManager实例和UI组件引用。
+    /// </summary>
+    private void Awake()
+    {
+        // 获取ColorBag、ColorTarget和ColorReward的GridLayoutGroup组件
+        colorBag = GameObject.Find("ColorBag").GetComponent<GridLayoutGroup>();
+        colorTarget = GameObject.Find("ColorTarget").GetComponent<GridLayoutGroup>();
+        colorReward = GameObject.Find("ColorReward").GetComponent<GridLayoutGroup>();
+
+
+        // 如果当前没有UIManager实例，则创建一个
+        if (instance == null) instance = this;
+    }
+
+    void Start()
+    {
+        // 获取textElement的CanvasGroup组件
+        canvasGroup = textElement.GetComponent<CanvasGroup>();
+
+
+        // 如果下一个关卡有额外时间，则显示时间增加的提示
+        if (DataDeliver.instance.isNextGate)
+        {
+            timeTextElement.text = "时间+120秒";
+            timeTextElement.color = new Color(UnityEngine.Random.value, UnityEngine.Random.value, UnityEngine.Random.value);
+            StartCoroutine(SlideAndFadeIn_Short()); // 启动协程以实现滑动和淡入效果
+        }
+
+        // 从DataDeliver实例获取时间限制，如果有的话
+        if (DataDeliver.instance.TimeLimit > 0)
+            TimeLimit = DataDeliver.instance.TimeLimit;
+
+
+        // 订阅MapGenerator的FinishTargetCollect事件，以便在目标收集完成时触发StartTextMove方法
+        MapGenerator.instance.FinishTargetCollect += StartTextMove;
+
+        // 显示当前关卡和房间数量
+        textElement.text = $"第{DataDeliver.instance.Wave}关\n房间数量:{DataDeliver.instance.NodeNumber}";
+        textElement.color = new Color(UnityEngine.Random.value, UnityEngine.Random.value, UnityEngine.Random.value);
+        StartTextMove(); // 开始UI元素的移动动画
+    }
+
+    private void Update()
+    {
+        // 更新时间限制，并检查是否超时
+        TimeLimit -= Time.deltaTime;
+        GameObject.Find("TimeLimit").GetComponent<TMPro.TMP_Text>().text = "时间剩余：" + Mathf.Ceil(TimeLimit) + "秒";
+        if (TimeLimit <= 0 && !isFailed && Time.time > 1f)
+        {
+            isFailed = true;
+            DataDeliver.instance.Score += ownColor.Count; // 游戏失败时，将玩家拥有的颜色数量加到分数上
+            FailedImageEmerge(); // 显示失败图片
+        }
+
+        // 更新玩家信息，如速度和跳跃力量
+        GameObject.Find("Speed").GetComponent<TMPro.TMP_Text>().text = "速度：" + GameObject.Find("Player").GetComponent<PlayerController>().moveSpeed;
+        GameObject.Find("JumpForce").GetComponent<TMPro.TMP_Text>().text = "跳跃力量：" + GameObject.Find("Player").GetComponent<PlayerController>().jumpForce;
+
+        // 更新奖励颜色刷新倒计时
+        refreshRewardColorCount += Time.deltaTime;
+        // 显示奖励颜色刷新提示
+        GameObject.Find("Reward").GetComponent<TMPro.TMP_Text>().text = "奖励颜色：" + "\n" + "(" + Mathf.Ceil(refreshRewardColorTime - refreshRewardColorCount) + "秒后刷新)";
+        if (refreshRewardColorCount > refreshRewardColorTime)
+        {
+            MapGenerator.instance.rewardGet = false; // 重置奖励获取标志
+            refreshRewardColorCount = 0;
+            RefreshRewardColor(); // 刷新奖励颜色
+            ReloadrewardColorList(); // 重新加载奖励颜色列表
+        }
+        // 更新玩家图标旋转
+        PlayerIconRotate();
+        // 快速加buff
+        if (Input.GetKeyDown(KeyCode.V)){
+            MapGenerator.instance.MapGenerator_FinishRewardCollect();
+        }
+        //退出
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            Application.Quit();
+        }
+    }
+
+    /// <summary>
+    /// 当游戏失败时执行的操作。
+    /// </summary>
+    private void FailedImageEmerge()
+    {
+        // 使光标可见
+        Cursor.visible = true;
+        // 将光标锁定在屏幕内
+        Cursor.lockState = CursorLockMode.Confined;
+        // 显示失败图像
+        failedImage.SetActive(true);
+        // 更新分数文本
+        GameObject.Find("Score").GetComponent<TMPro.TMP_Text>().text = $"已收集{DataDeliver.instance.Score}个颜色";
+        // 为“重启”按钮添加点击事件监听器
+        GameObject.Find("Restart").GetComponent<Button>().onClick.AddListener(Restart);
+    }
+
+    /// <summary>
+    /// 重启游戏场景。
+    /// </summary>
+    private void Restart()
+    {
+        // 销毁数据传递单例实例
+        Destroy(DataDeliver.instance);
+        // 加载第一个场景（场景索引为0）
+        SceneManager.LoadScene(0);
+    }
+
+    /// <summary>
+    /// 根据玩家的旋转角度旋转玩家图标。
+    /// </summary>
+    private void PlayerIconRotate()
+    {
+        // 将玩家图标的旋转设置为玩家控制器Y轴旋转的负值加90度
+        playerIcon.transform.rotation = Quaternion.Euler(0, 0, -PlayerController.playerRotationY + 90f);
+    }
+
+    /// <summary>
+    /// 刷新奖励颜色，为场景中的颜色立方体分配新的随机颜色。
+    /// </summary>
+    private void RefreshRewardColor()
+    {
+        // 清空奖励颜色列表
+        rewardColor.Clear();
+        // 获取场景中所有带有"ColorCube"标签的游戏对象
+        GameObject[] currentColorCubes = GameObject.FindGameObjectsWithTag("ColorCube");
+        // 创建一个与颜色立方体数量相等的材料数组
+        Material[] materials = new Material[currentColorCubes.Length];
+        // 遍历所有颜色立方体，获取它们的材料
+        for (int i = 0; i < currentColorCubes.Length; ++i)
+        {
+            materials[i] = currentColorCubes[i].GetComponent<Renderer>().material;
+        }
+        // 调用地图生成器的实例来生成奖励颜色
+        MapGenerator.instance.GenerateRewardColor(materials);
+    }
+
+    /// <summary>
+    /// 创建一个新的RawImage对象，并将其添加到指定的GridLayoutGroup中。
+    /// </summary>
+    /// <param name="parent">父容器GridLayoutGroup。</param>
+    /// <returns>返回创建的RawImage对象。</returns>
+    public RawImage CreateRawImage(GridLayoutGroup parent)
+    {
+        // 创建一个新的GameObject，并添加必要的组件
+        GameObject rawImageObject = new GameObject("DynamicRawImage", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
+
+        // 设置新创建的RawImage对象的父对象为指定的GridLayoutGroup
+        rawImageObject.transform.SetParent(parent.gameObject.transform, false);
+
+        // 获取RawImage组件的引用
+        RawImage rawImage = rawImageObject.GetComponent<RawImage>();
+
+        // 创建一个新的Material，并使用UI/Default着色器
+        Material newMaterial = new Material(Shader.Find("UI/Default"));
+
+        // 将新创建的Material分配给RawImage
+        rawImage.material = newMaterial;
+
+        // 返回创建的RawImage对象
+        return rawImage;
+    }
+    /// <summary>
+    /// 重新加载目标颜色列表，并更新UI显示。
+    /// </summary>
+    internal void ReloadTargetColorList()
+    {
+
+        // 遍历ColorTarget中的所有子对象，并销毁它们
+        foreach (Transform child in colorTarget.transform)
+        {
+            Destroy(child.gameObject);
+        }
+
+        // 遍历目标颜色列表，并为每个颜色创建一个新的RawImage
+        for (int i = 0; i < targetColor.Count; i++)
+        {
+            // 创建一个新的RawImage对象，并将其添加到ColorTarget中
+            RawImage newTargetImage = CreateRawImage(colorTarget);
+
+            // 为新的RawImage创建一个新的Material，并设置其颜色
+            Material mat = new Material(Shader.Find("UI/Default"));
+            mat.color = targetColor[i];
+
+            // 将新的Material分配给新的RawImage
+            newTargetImage.material = mat;
+            newTargetImage.texture = targetTexture[i];
+        }
+    }
+
+    /// <summary>
+    /// 重新加载奖励颜色列表，并更新UI中的显示。
+    /// </summary>
+    internal void ReloadrewardColorList()
+    {
+        // 遍历ColorReward中的所有子对象，并销毁它们以清空当前列表
+        foreach (Transform child in colorReward.transform)
+        {
+            Destroy(child.gameObject);
+        }
+
+        // 根据rewardColor列表中的颜色，为每个颜色创建一个新的RawImage并添加到ColorReward中
+        for (int i = 0; i < rewardColor.Count; i++)
+        {
+            // 创建一个新的RawImage对象，并将其父对象设置为colorReward
+            RawImage newTargetImage = CreateRawImage(colorReward);
+
+            // 为新的RawImage创建一个新的Material，并设置其颜色为当前奖励颜色
+            Material mat = new Material(Shader.Find("UI/Default"));
+            mat.color = rewardColor[i];
+
+            // 将新创建的Material分配给RawImage的material属性
+            newTargetImage.material = mat;
+            newTargetImage.texture = rewardTexture[i];
+        }
+    }
+    
+    #region 文字移动
+
+    /// <summary>
+    /// 开始文字移动和淡入淡出的协程。
+    /// </summary>
+    public void StartTextMove()
+    {
+        // 启动SlideAndFadeIn协程来处理文字移动和淡入淡出的动画
+        StartCoroutine(SlideAndFadeIn());
+    }
+
+    /// <summary>
+    /// 控制文字从屏幕外移动到屏幕上并显示，然后淡出并移回屏幕外的协程。
+    /// </summary>
+    /// <returns>协程的迭代器。</returns>
+    private IEnumerator SlideAndFadeIn()
+    {
+        // 设置文字的初始位置为屏幕外
+        textElement.rectTransform.localPosition = offScreenPosition;
+        // 设置文字的初始透明度为0（不可见）
+        canvasGroup.alpha = 0;
+
+        // 移动文字到屏幕上
+        float timeElapsed = 0f;
+        while (timeElapsed < moveDuration)
+        {
+            // 使用线性插值平滑地移动文字到屏幕上的位置
+            textElement.rectTransform.localPosition = Vector3.Lerp(offScreenPosition, onScreenPosition, timeElapsed / moveDuration);
+            timeElapsed += Time.deltaTime;
+            yield return null; // 等待一帧
+        }
+        textElement.rectTransform.localPosition = onScreenPosition; // 确保文字到达最终位置
+
+        // 文字渐现
+        timeElapsed = 0f;
+        while (timeElapsed < fadeDuration)
+        {
+            // 使用线性插值平滑地增加文字的透明度
+            canvasGroup.alpha = Mathf.Lerp(0, 1, timeElapsed / fadeDuration);
+            timeElapsed += Time.deltaTime;
+            yield return null; // 等待一帧
+        }
+        canvasGroup.alpha = 1; // 确保文字最终完全可见
+
+        // 等待一段时间后开始淡出和移回屏幕外
+        yield return new WaitForSeconds(2f);
+
+        // 淡出文字
+        timeElapsed = 0f;
+        while (timeElapsed < fadeDuration)
+        {
+            // 使用线性插值平滑地减少文字的透明度
+            canvasGroup.alpha = Mathf.Lerp(1, 0, timeElapsed / fadeDuration);
+            timeElapsed += Time.deltaTime;
+            yield return null; // 等待一帧
+        }
+        canvasGroup.alpha = 0; // 确保文字最终完全不可见
+
+        // 移回屏幕外
+        timeElapsed = 0f;
+        while (timeElapsed < moveDuration)
+        {
+            // 使用线性插值平滑地移动文字回到屏幕外的位置
+            textElement.rectTransform.localPosition = Vector3.Lerp(onScreenPosition, offScreenPosition, timeElapsed / moveDuration);
+            timeElapsed += Time.deltaTime;
+            yield return null; // 等待一帧
+        }
+        textElement.rectTransform.localPosition = offScreenPosition; // 确保文字回到初始位置
+    }
+
+    #endregion
+
+    public IEnumerator SlideAndFadeIn_Short()
+    {
+        // 设置初始位置为屏幕外
+        timeTextElement.rectTransform.localPosition = offScreenPosition;
+
+        // 移动到屏幕上
+        float timeElapsed = 0f;
+        Vector3 offSet = new Vector3(0,400,0);
+        while (timeElapsed < 0.5f)
+        {
+            timeTextElement.rectTransform.localPosition = Vector3.Lerp(offScreenPosition, onScreenPosition + offSet, timeElapsed / 0.5f);
+            timeElapsed += Time.deltaTime;
+            yield return null;
+        }
+        timeTextElement.rectTransform.localPosition = onScreenPosition + offSet;
+
+        // 文字渐现
+        timeElapsed = 0f;
+        while (timeElapsed < fadeDuration)
+        {
+            timeTextElement.GetComponent<CanvasGroup>().alpha = Mathf.Lerp(0, 1, timeElapsed / fadeDuration);
+            timeElapsed += Time.deltaTime;
+            yield return null;
+        }
+        timeTextElement.GetComponent<CanvasGroup>().alpha = 1; // 确保最终透明度为 1
+
+        // 等待一段时间后消失
+        yield return new WaitForSeconds(2f);
+
+        // 淡出并移回屏幕外
+        timeElapsed = 0f;
+        while (timeElapsed < fadeDuration)
+        {
+            timeTextElement.GetComponent<CanvasGroup>().alpha = Mathf.Lerp(1, 0, timeElapsed / fadeDuration);
+            timeElapsed += Time.deltaTime;
+            yield return null;
+        }
+        canvasGroup.alpha = 0;
+
+        // 移回屏幕外
+        timeElapsed = 0f;
+        while (timeElapsed < 0.5f)
+        {
+            timeTextElement.rectTransform.localPosition = Vector3.Lerp(onScreenPosition + offSet, offScreenPosition, timeElapsed / 0.5f);
+            timeElapsed += Time.deltaTime;
+            yield return null;
+        }
+        timeTextElement.rectTransform.localPosition = offScreenPosition;
+    }
+}
+
+        </code></pre>
+    </div>
+
+    <!-- 下载链接 -->
+    <h2>获取代码</h2>
+    <p>
+        <a href="myproject-source.zip" download>下载ZIP文件</a> |
+        <a href="https://github.com/yourusername/myproject">访问GitHub仓库</a>
+    </p>
+</body>
+</html>
